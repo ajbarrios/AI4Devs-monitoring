@@ -53,3 +53,6 @@ Vamos a leer de nuevo lo que hay que resolver en @ticket-monitoring y checkear q
 
 **Prompt 8 usando Cursor + Gemini 2.5 Pro**
 Actualiza el archivo @README.md del proyecto con las instrucciones de la integración de datadog y el sistema de monitoring. Redactalo de forma que un desarrollador junior sin experiencia sea capaz de entenderlo y ofrecer modificaciones.
+
+**Prompt 9 usando Cursor + Gemini 2.5 Pro**
+Actualiza el archivo @README.md del proyecto con las instrucciones de la integración de datadog y el sistema de monitoring. Redactalo de forma que un desarrollador junior sin experiencia sea capaz de entenderlo y ofrecer modificaciones.
