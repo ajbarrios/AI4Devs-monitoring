@@ -68,7 +68,7 @@ npm install
 ```
 cd backend
 npm run build
-````
+```
 4. Inicia el servidor backend:
 ```
 cd backend
@@ -125,6 +125,237 @@ npx prisma generate
 npx prisma migrate dev
 ts-node seed.ts
 ```
+
+## Monitorización con Datadog
+
+Para asegurar que nuestra aplicación funciona correctamente y para entender su rendimiento, utilizamos Datadog, una potente plataforma de monitorización y análisis. Datadog nos permite recopilar métricas, trazas (seguimiento de solicitudes a través de diferentes servicios) y logs de nuestra aplicación y infraestructura.
+
+Esto es especialmente útil para:
+- Detectar y diagnosticar problemas rápidamente.
+- Entender cómo los usuarios interactúan con la aplicación.
+- Optimizar el rendimiento.
+- Configurar alertas para ser notificados de comportamientos anómalos.
+
+### ¿Cómo funciona?
+
+Datadog funciona instalando "agentes" en nuestros servidores o integrando librerías específicas en nuestro código. Estos agentes y librerías recopilan datos y los envían a la plataforma de Datadog, donde podemos visualizarlos en dashboards, analizarlos y configurar alertas.
+
+### Configuración Inicial (para un desarrollador)
+
+Como desarrollador, normalmente no necesitarás configurar la infraestructura principal de Datadog, pero sí interactuarás con ella a través del código y, ocasionalmente, podrías necesitar ejecutar un agente localmente para pruebas.
+
+**1. Cuenta de Datadog:**
+   - Necesitarás acceso a la cuenta de Datadog de la organización. Tu líder de equipo o el responsable de infraestructura te proporcionará las credenciales o te añadirá como miembro.
+   - Una vez dentro, familiarízate con la interfaz. Verás secciones para Métricas, Trazas (APM), Logs, Dashboards, etc.
+
+**2. Variables de Entorno:**
+   - La integración de Datadog en la aplicación a menudo requiere claves de API y otras configuraciones que se gestionan a través de variables de entorno.
+   - Asegúrate de que tu archivo `.env` (o la configuración de entorno equivalente si usas Docker para desarrollo local con todo integrado) tenga las siguientes variables (los valores exactos te los proporcionará tu equipo):
+     ```
+     DD_API_KEY=<TU_API_KEY_DE_DATADOG>
+     DD_APP_KEY=<TU_APP_KEY_DE_DATADOG> (a veces llamada DD_APPLICATION_KEY)
+     DD_SITE=<TU_SITIO_DATADOG> (ej. "datadoghq.com" o "datadoghq.eu")
+     DD_SERVICE=<NOMBRE_DEL_SERVICIO> (ej. "lti-backend", "lti-frontend")
+     DD_ENV=<ENTORNO> (ej. "development", "staging", "production")
+     DD_VERSION=<VERSION_DE_LA_APP> (ej. "1.0.5", se puede tomar del package.json)
+     DD_LOGS_INJECTION=true (para inyectar IDs de traza en los logs)
+     ```
+   - **Importante:** Nunca subas tus claves de API a repositorios de código. Utiliza archivos `.env` (añadidos al `.gitignore`) o secretos de tu sistema de CI/CD.
+
+### Integración en el Backend (Node.js con Express)
+
+Nuestro backend utiliza la librería `dd-trace` para el Tracing Distribuido (APM) y el envío de métricas.
+
+**Instalación (si no está ya en `package.json`):**
+```sh
+cd backend
+npm install dd-trace
+```
+
+**Uso:**
+La librería `dd-trace` generalmente se inicializa al principio del punto de entrada de tu aplicación (por ejemplo, en `backend/src/index.ts`).
+
+```typescript
+// backend/src/index.ts o similar
+
+import tracer from 'dd-trace';
+
+// Inicializar el tracer de Datadog
+// Esto DEBE hacerse ANTES de importar cualquier otro módulo instrumentado (express, pg, etc.)
+tracer.init({
+  logInjection: true, // Asegura que los IDs de traza se añadan a los logs
+  profiling: true,    // Habilita el profiler continuo
+  env: process.env.DD_ENV,
+  service: process.env.DD_SERVICE,
+  version: process.env.DD_VERSION
+  // Aquí puedes añadir más configuraciones específicas si es necesario,
+  // como plugins para librerías específicas o tags personalizados.
+});
+
+// El resto de tus importaciones y código de la aplicación
+import express from 'express';
+// ... más importaciones
+
+const app = express();
+// ... configuración de la app
+
+// Ejemplo de cómo añadir un tag personalizado a una traza
+// app.use((req, res, next) => {
+//   const span = tracer.scope().active();
+//   if (span) {
+//     span.setTag('user.id', req.user?.id || 'anonymous');
+//   }
+//   next();
+// });
+
+// ... resto del código del servidor
+```
+
+**¿Qué monitoriza automáticamente?**
+Con `dd-trace` inicializado, muchas cosas se monitorizan automáticamente:
+- **Solicitudes HTTP:** Tiempos de respuesta, códigos de estado, errores para cada endpoint.
+- **Consultas a la base de datos:** Si usas `pg` (PostgreSQL) u otros drivers soportados, las consultas se trazarán.
+- **Errores no capturados:** Se reportarán a Datadog.
+
+**Logs:**
+Para enviar logs a Datadog, puedes usar una librería de logging compatible (como Winston) y configurarla para que envíe logs a Datadog, o si el Agente de Datadog está corriendo en el mismo host/contenedor que tu aplicación, puede recoger los logs directamente de `stdout`/`stderr` o de archivos.
+La opción `logInjection: true` en `dd-trace` es útil porque añade `dd.trace_id` y `dd.span_id` a tus logs, lo que permite correlacionarlos con las trazas en Datadog.
+
+### Integración en el Frontend (React)
+
+Para el frontend, Datadog ofrece la librería RUM (Real User Monitoring) y Logs.
+
+**Instalación (si no está ya en `package.json`):**
+```sh
+cd frontend
+npm install @datadog/browser-rum @datadog/browser-logs
+```
+
+**Uso (en `frontend/src/index.js` o `App.js`):**
+```javascript
+// frontend/src/index.js o App.js
+
+import { datadogRum } from '@datadog/browser-rum';
+import { datadogLogs } from '@datadog/browser-logs';
+
+datadogRum.init({
+  applicationId: '<TU_RUM_APPLICATION_ID>', // Te lo proporciona Datadog
+  clientToken: '<TU_RUM_CLIENT_TOKEN>',    // Te lo proporciona Datadog
+  site: process.env.REACT_APP_DD_SITE || 'datadoghq.com', // Asegúrate de que esta variable esté disponible
+  service: process.env.REACT_APP_DD_SERVICE || 'lti-frontend',
+  env: process.env.REACT_APP_DD_ENV || 'development',
+  version: process.env.REACT_APP_DD_VERSION || '1.0.0', // Puedes obtenerla del package.json
+  sessionSampleRate: 100, // Muestra todas las sesiones (ajusta para producción)
+  sessionReplaySampleRate: 20, // Graba el 20% de las sesiones (ajusta según necesidad y coste)
+  trackUserInteractions: true,
+  trackResources: true,
+  trackLongTasks: true,
+  defaultPrivacyLevel: 'mask-user-input' // Controla la privacidad de los datos capturados
+});
+
+datadogLogs.init({
+  clientToken: '<TU_LOGS_CLIENT_TOKEN>', // Te lo proporciona Datadog
+  site: process.env.REACT_APP_DD_SITE || 'datadoghq.com',
+  service: process.env.REACT_APP_DD_SERVICE || 'lti-frontend',
+  env: process.env.REACT_APP_DD_ENV || 'development',
+  forwardErrorsToLogs: true,
+  sessionSampleRate: 100,
+});
+
+// Para iniciar la grabación de sesión RUM (si está habilitada)
+datadogRum.startSessionReplayRecording();
+
+// Puedes enviar logs personalizados así:
+// datadogLogs.logger.info('Usuario ha iniciado sesión', { user_id: '123' });
+```
+**Variables de Entorno en React:**
+Recuerda que para acceder a variables de entorno en React (creado con Create React App), deben empezar con `REACT_APP_`. Deberás definir `REACT_APP_DD_SITE`, `REACT_APP_DD_SERVICE`, `REACT_APP_DD_ENV`, `REACT_APP_DD_VERSION` en tu archivo `.env` del frontend.
+
+**¿Qué monitoriza?**
+- **Vistas de página:** Qué páginas visitan los usuarios.
+- **Interacciones de usuario:** Clics, errores de JavaScript.
+- **Rendimiento de carga:** Tiempos de carga de recursos, Core Web Vitals.
+- **Logs del navegador:** Errores de consola, logs personalizados.
+- **Session Replay:** Grabaciones visuales de las sesiones de usuario (si está configurado).
+
+### Monitorización de PostgreSQL con Datadog
+
+Si PostgreSQL se ejecuta en un host o contenedor donde el Agente de Datadog puede acceder, puedes configurarlo para que recopile métricas directamente de la base de datos.
+
+**Configuración del Agente de Datadog:**
+Esto generalmente lo hace el equipo de infraestructura, pero es bueno saberlo:
+1.  El Agente de Datadog debe estar instalado en el servidor de la base de datos o en un host que pueda conectarse a ella.
+2.  Se habilita la integración de PostgreSQL en la configuración del Agente (`postgres.d/conf.yaml`).
+    ```yaml
+    init_config:
+
+    instances:
+      - host: localhost # O la IP/hostname de tu servidor PostgreSQL
+        port: 5432
+        username: datadog # Un usuario específico para Datadog con permisos de lectura
+        password: <TU_PASSWORD_PARA_EL_USUARIO_DATADOG>
+        dbm: true # Habilita Database Monitoring
+        relations: true # Recopila métricas por tabla
+        tags:
+          - "env:<TU_ENTORNO>"
+          - "service:postgresql"
+    ```
+3.  Se crea un usuario `datadog` en PostgreSQL con los permisos necesarios (generalmente, `pg_monitor` y acceso a `pg_stat_activity`).
+
+**¿Qué se monitoriza?**
+- Conexiones, ratios de aciertos de caché, queries lentas, replicación, y muchas más métricas específicas de PostgreSQL.
+- Con DBM (Database Monitoring), puedes ver el rendimiento de las queries, planes de ejecución, etc.
+
+### ¿Cómo puedes contribuir como desarrollador junior?
+
+¡Hay muchas formas de empezar a usar y mejorar la monitorización!
+
+1.  **Explora los Dashboards Existentes:**
+    *   Pide a tu equipo que te muestre los dashboards principales en Datadog.
+    *   Intenta entender qué métricas se están mostrando y por qué son importantes.
+    *   Observa cómo se correlacionan las métricas del backend, frontend y la base de datos.
+
+2.  **Añade Logs Contextuales:**
+    *   Cuando estés desarrollando una nueva funcionalidad o arreglando un bug, piensa qué información sería útil en los logs si algo sale mal.
+    *   En el backend: `console.log('Mensaje útil', { datoImportante: valor });` (si usas una librería de logging configurada, usa su sintaxis). `dd-trace` enriquecerá estos logs.
+    *   En el frontend: `datadogLogs.logger.info('Acción del usuario X', { detalle: 'valor' });`
+
+3.  **Añade Trazas Personalizadas (Spans):**
+    *   Si tienes una operación compleja o una sección de código cuyo rendimiento quieres medir específicamente, puedes crear "spans" personalizados.
+    *   Backend (Node.js):
+        ```typescript
+        import tracer from 'dd-trace';
+
+        async function miOperacionCompleja() {
+          const span = tracer.startSpan('operacion.compleja');
+          try {
+            // ... tu código ...
+            span.setTag('parametro.importante', 'valor');
+            // ... más código ...
+          } catch (error) {
+            span.setTag('error', error);
+            throw error;
+          } finally {
+            span.finish();
+          }
+        }
+        ```
+
+4.  **Propón Nuevas Métricas o Alertas:**
+    *   Mientras trabajas, si piensas "sería útil saber cuántas veces ocurre X" o "deberíamos ser alertados si Y pasa de Z", ¡propónlo!
+    *   Datadog permite crear métricas personalizadas y alertas complejas.
+
+5.  **Revisa las Sesiones de Usuario (RUM):**
+    *   Si estás trabajando en el frontend, mira las grabaciones de sesiones (Session Replay) para entender cómo los usuarios reales interactúan con tu nueva funcionalidad o para reproducir bugs.
+    *   Analiza los errores de JavaScript que se reportan en RUM.
+
+6.  **Analiza el Rendimiento de las Queries (DBM):**
+    *   Si estás optimizando una parte del backend que interactúa mucho con la base de datos, usa Datadog Database Monitoring para ver qué queries son lentas o se ejecutan con mucha frecuencia.
+
+7.  **Pregunta y Aprende:**
+    *   No dudes en preguntar a los miembros más experimentados del equipo sobre cómo usan Datadog o si tienes dudas sobre alguna métrica o dashboard.
+
+La monitorización es un campo amplio y siempre hay algo nuevo que aprender. Empezar por entender lo básico y cómo se aplica a tu proyecto te convertirá en un desarrollador más eficaz.
 
 Una vez has dado todos los pasos, deberías poder guardar nuevos candidatos, tanto via web, como via API, verlos en la base de datos y obtenerlos mediante GET por id. 
 
